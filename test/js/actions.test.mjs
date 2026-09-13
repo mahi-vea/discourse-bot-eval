@@ -26,8 +26,9 @@ function mount(post = makePost(), ctxOverrides = {}) {
   const bar = doc.createElement("div");
   bar.className = "bot-eval-bar";
   doc.querySelector(".cooked").appendChild(bar);
+  globalThis.document = doc;
   renderBar(bar, post, makeCtx(ctxOverrides));
-  return { bar, post, article: doc.querySelector("article") };
+  return { bar, post, doc, article: doc.querySelector("article") };
 }
 
 const $ = (bar, sel) => bar.querySelector(sel);
@@ -104,6 +105,21 @@ describe("thumbs up", () => {
     await settle();
 
     assert.equal(call("/posts").data.raw, `${TAG.up} ${i18n("bot_eval.no_note.up")}`);
+  });
+
+  it("takes its own tombstone out of the page when a note is removed", async () => {
+    const note = makeNote(TAG.down, { id: 901 });
+    const { bar, doc } = mount(makePost({}, [note]));
+
+    const ghost = doc.createElement("div");
+    ghost.className = "topic-post";
+    ghost.innerHTML = '<article data-post-id="901"></article>';
+    doc.body.appendChild(ghost);
+
+    $(bar, ".js-down").click();
+    await settle();
+
+    assert.equal(doc.querySelector('article[data-post-id="901"]'), null);
   });
 
   it("takes the solution, the like and the note back when pressed again", async () => {
@@ -234,7 +250,7 @@ describe("needs work", () => {
     assert.match(bar.innerHTML, /js-down is-active/);
   });
 
-  it("replaces an earlier rating instead of stacking a second one", async () => {
+  it("edits the earlier rating in place rather than replacing the post", async () => {
     const note = makeNote(TAG.up, { id: 901 });
     const { bar } = mount(makePost({}, [note]));
 
@@ -243,10 +259,29 @@ describe("needs work", () => {
     $(bar, ".js-save").click();
     await settle();
 
-    assert.ok(call("/posts/901"), "the thumbs up note is removed");
-    assert.equal(call("/posts").data.raw, `${TAG.down} changed my mind`);
+    // Deleting and re-posting would leave a "deleted post" tombstone in the
+    // topic every time somebody changed their mind.
+    assert.deepEqual(call("/posts/901"), {
+      url: "/posts/901",
+      type: "PUT",
+      data: { post: { raw: `${TAG.down} changed my mind` } },
+    });
+    assert.equal(call("/posts"), undefined, "no second note is created");
+    assert.equal(note.raw, `${TAG.down} changed my mind`);
+
     assert.match(bar.innerHTML, /js-down is-active/);
     assert.doesNotMatch(bar.innerHTML, /js-up is-active/);
+  });
+
+  it("still writes a fresh note when there is none yet", async () => {
+    const { bar } = mount();
+
+    $(bar, ".js-down").click();
+    type(bar, "first note");
+    $(bar, ".js-save").click();
+    await settle();
+
+    assert.equal(call("/posts").data.raw, `${TAG.down} first note`);
   });
 
   it("is undone by deleting that note", async () => {

@@ -174,6 +174,19 @@ function readState(post, ctx) {
   };
 }
 
+// Discourse leaves a trash-can placeholder where a deleted post was, for staff.
+// That is right for real content and noise for a note this component wrote, so
+// the placeholder is taken out of the page. It is cosmetic either way: the page
+// is authoritative again on the next load.
+function hideTombstone(postId) {
+  try {
+    const article = document.querySelector(`article[data-post-id="${postId}"]`);
+    (article?.closest(".topic-post") || article)?.remove();
+  } catch {
+    // no DOM, or a post stream that does not label its articles
+  }
+}
+
 function setPostField(post, key, value) {
   try {
     post.set(key, value);
@@ -233,6 +246,11 @@ const whisper = (post, tag, note) =>
       post_type: WHISPER,
     },
   });
+
+// Changing your mind edits the note in place. Deleting and re-posting would
+// leave a "deleted post" tombstone in the topic for every change of heart.
+const editNote = (id, tag, note) =>
+  ajax(`/posts/${id}`, { type: "PUT", data: { post: { raw: `${tag} ${note}` } } });
 
 // Taking a reply out of public view: moderators still see it, one call puts it
 // back, and the bot account collects nothing against it.
@@ -337,14 +355,20 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
 
   // One rating per evaluator per reply: an earlier note of theirs is taken away
   // before the new one is written, whichever button it came from.
+  // Removing a rating altogether. The tombstone Discourse leaves behind is
+  // taken out of the page too, since this note was our bookkeeping and not
+  // something anybody wrote to be read.
   const clearNote = () => {
     if (!state.note) {
       return Promise.resolve(true);
     }
-    return removePost(state.note.id).then(
+    const id = state.note.id;
+
+    return removePost(id).then(
       () => {
         // findNote skips deleted notes, so the bar updates without a reload.
         setPostField(state.note, "deleted_at", new Date().toISOString());
+        hideTombstone(id);
         return true;
       },
       () => false
@@ -377,15 +401,18 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
   const saveNote = (tag, forMode, note, carried) => {
     const text = noteOr(note, forMode);
 
-    return clearNote()
-      .then(() => whisper(post, tag, text))
-      .then(
-        (created) => {
-          rememberNote(created, tag, text);
-          return carried;
-        },
-        (error) => carried || withReason(t("notice.whisper_failed"), error)
-      );
+    // One note per evaluator per reply: edit the one already there rather than
+    // replacing it, so changing your mind leaves no debris in the topic.
+    const written = state.note
+      ? editNote(state.note.id, tag, text).then(() => {
+          setPostField(state.note, "raw", `${tag} ${text}`);
+        })
+      : whisper(post, tag, text).then((created) => rememberNote(created, tag, text));
+
+    return written.then(
+      () => carried,
+      (error) => carried || withReason(t("notice.whisper_failed"), error)
+    );
   };
 
   const withSolution = (shouldAccept, carried) => {
@@ -457,15 +484,7 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
 
   bar.querySelector(".js-down")?.addEventListener("click", () => {
     if (state.rating === "down") {
-      return run(() =>
-        removePost(state.note.id).then(
-          () => {
-            setPostField(state.note, "deleted_at", new Date().toISOString());
-            return null;
-          },
-          (error) => withReason(t("notice.undo_failed"), error)
-        )
-      );
+      return run(() => clearNote().then((ok) => (ok ? null : t("notice.undo_failed"))));
     }
     return redraw("down");
   });

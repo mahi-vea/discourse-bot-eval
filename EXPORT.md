@@ -22,7 +22,9 @@ typed. The other effects are extras.
 | 🚫 Mark for review | a whisper tagged `[bot-eval:review]` | the reply is deleted (`posts.deleted_at`) |
 
 A rating that was taken back is a **deleted whisper**, so every query filters on
-`w.deleted_at IS NULL`. One evaluator has at most one live whisper per reply.
+`w.deleted_at IS NULL`. Changing your mind edits the existing whisper rather than posting a
+second one, so one evaluator has exactly one live whisper per reply, carrying their current
+verdict — there is no history of earlier verdicts to de-duplicate.
 
 Nothing is ever flagged, so **the Review queue is not part of this** — ignore it.
 

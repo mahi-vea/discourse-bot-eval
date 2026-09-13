@@ -17,8 +17,8 @@ bar under the post:
 `[bot-eval:good]`, `[bot-eval:needs-work]` or `[bot-eval:review]` — carrying whatever was
 typed, or "no reason given". That is the record you query later, and it is written for all
 three buttons so a good reply is exactly as easy to find as a bad one. One rating per
-evaluator per reply: pressing a different button replaces the earlier note, and pressing the
-same one again deletes it.
+evaluator per reply: pressing a different button **edits** the note you already wrote, and
+pressing the same one again deletes it.
 
 **Nothing here flags anything.** Flags are scored against the account they are raised on and
 can trip Discourse's auto-silence thresholds, which would eventually silence your bot; they
