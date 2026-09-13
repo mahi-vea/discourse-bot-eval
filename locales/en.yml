@@ -1,0 +1,39 @@
+en:
+  theme_metadata:
+    description: "Lets a trusted group rate your answer bot's replies — good, needs work, or pull it out of public view — using Discourse's own likes and flags."
+    settings:
+      bot_usernames: "Usernames of the bot account(s) whose replies can be rated. Replies from anyone else are never touched. Leave empty and nothing appears anywhere."
+      evaluator_groups: "Names of the groups whose members see the rating bar, e.g. eyantra_staff. Leave empty and nothing appears anywhere."
+      hide_on_review: "Mark for review hides the reply immediately (needs the evaluator to be a moderator). Switch off to send it to the Review queue instead, without hiding it."
+      mark_solution_on_good: "A thumbs up also accepts the reply as the topic's solution, and taking it back withdraws it. Needs the Solved plugin; ignored without it."
+      good_note_as_whisper: "A note written on a thumbs up is posted as a staff-only whisper on the topic, since a like alone cannot carry text. Switch off to drop the note box on thumbs up."
+
+  bot_eval:
+    title: "Bot reply:"
+    up: "Good"
+    down: "Needs work"
+    mark_review: "Mark for review"
+    unmark_review: "Un-hide"
+    save: "Save"
+    cancel: "Cancel"
+    hint:
+      up: "What made this reply good? Optional — a line about what it got right helps us keep it that way. It is posted as a staff-only whisper."
+      down: "Optional, but please do write: what is wrong — a wrong fact, a missing step, a bad link, the wrong tone. Your note goes to the moderators' Review queue."
+      review: "Optional, but please do write: why this reply should not be public. Saving hides it from everyone but the moderators, and sends your note to the Review queue."
+    hint_solution:
+      up: "It is also marked as the topic's solution."
+      down: "It also stops being the topic's solution."
+      review: "It also stops being the topic's solution."
+    placeholder:
+      up: "e.g. correct steps, linked the right rulebook section"
+      down: "e.g. it quoted last year's deadline"
+      review: "e.g. contains a wrong submission deadline"
+    no_note:
+      down: "Marked as needing work from the bot reply evaluation bar. No reason was given."
+      review: "Pulled out of public view from the bot reply evaluation bar. No reason was given."
+    status:
+      liked: "You marked this reply as good."
+      flagged: "You sent this reply to the Review queue."
+      hidden: "Hidden from everyone but the moderators."
+      solution: "Accepted as the topic's solution."
+    whisper_prefix: "Bot reply evaluation — good:"

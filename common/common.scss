@@ -1,0 +1,110 @@
+.bot-eval-bar {
+  margin-top: 1em;
+  padding: 0.65em 0.8em;
+  border: 1px solid var(--primary-low);
+  border-left: 3px solid var(--tertiary);
+  border-radius: 4px;
+  background: var(--primary-very-low);
+  font-size: var(--font-down-1);
+
+  .bot-eval-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4em;
+  }
+
+  .bot-eval-title {
+    color: var(--primary-medium);
+    margin-right: 0.3em;
+    font-weight: 700;
+  }
+
+  .bot-eval-btn {
+    padding: 0.25em 0.6em;
+
+    .d-icon {
+      margin-right: 0.3em;
+    }
+
+    &.is-active {
+      background: var(--tertiary);
+      color: var(--secondary);
+
+      .d-icon {
+        color: var(--secondary);
+      }
+    }
+  }
+
+  .bot-eval-count {
+    margin-left: 0.4em;
+    opacity: 0.75;
+  }
+
+  .bot-eval-hint {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--primary-medium);
+    opacity: 0.8;
+    line-height: 1.4;
+    margin-bottom: 0.35em;
+    max-width: 60em;
+  }
+
+  .bot-eval-error {
+    color: var(--danger);
+    margin-bottom: 0.4em;
+
+    &:empty {
+      display: none;
+    }
+  }
+
+  .bot-eval-form {
+    margin-top: 0.6em;
+
+    textarea {
+      width: 100%;
+      margin-bottom: 0.4em;
+
+      &.has-error {
+        border-color: var(--danger);
+      }
+    }
+  }
+
+  .bot-eval-form-actions {
+    display: flex;
+    gap: 0.4em;
+  }
+
+  .bot-eval-status {
+    margin-top: 0.5em;
+    color: var(--primary-medium);
+
+    &.is-solution {
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    &.is-review {
+      color: var(--danger);
+      font-weight: 700;
+    }
+  }
+
+  .bot-eval-note {
+    font-weight: normal;
+    color: var(--primary-medium);
+  }
+}
+
+// Make it obvious that a marked reply is not visible to the rest of the forum.
+.topic-post.bot-eval-under-review {
+  .topic-body {
+    opacity: 0.85;
+    border-left: 3px solid var(--danger);
+    padding-left: 0.6em;
+  }
+}

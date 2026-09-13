@@ -1,0 +1,21 @@
+bot_usernames:
+  type: list
+  list_type: compact
+  default: ""
+
+evaluator_groups:
+  type: list
+  list_type: compact
+  default: ""
+
+hide_on_review:
+  type: bool
+  default: true
+
+mark_solution_on_good:
+  type: bool
+  default: true
+
+good_note_as_whisper:
+  type: bool
+  default: true

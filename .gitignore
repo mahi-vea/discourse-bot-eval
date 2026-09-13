@@ -1,0 +1,4 @@
+test/js/node_modules/
+test/js/package-lock.json
+test/js/*.generated.mjs
+test/js/locale.generated.json
