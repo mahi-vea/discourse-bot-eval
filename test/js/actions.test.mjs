@@ -5,7 +5,7 @@ import { loadComponent } from "./load.mjs";
 import { i18n } from "./stubs/i18n.mjs";
 import * as ajaxStub from "./stubs/ajax.mjs";
 import * as errorStub from "./stubs/ajax-error.mjs";
-import { applySettings, makePost, makeSite, LIKE, NOTIFY_MODERATORS } from "./fixtures.mjs";
+import { applySettings, makePost, makeCtx, LIKE, NOTIFY_MODERATORS } from "./fixtures.mjs";
 
 let renderBar;
 
@@ -20,13 +20,13 @@ beforeEach(() => {
   errorStub.reset();
 });
 
-function mount(post = makePost(), { solved = true } = {}) {
+function mount(post = makePost(), ctxOverrides = {}) {
   const dom = new JSDOM(`<article class="topic-post"><div class="cooked"></div></article>`);
   const doc = dom.window.document;
   const bar = doc.createElement("div");
   bar.className = "bot-eval-bar";
   doc.querySelector(".cooked").appendChild(bar);
-  renderBar(bar, post, { site: makeSite(), solved });
+  renderBar(bar, post, makeCtx(ctxOverrides));
   return { bar, post, article: doc.querySelector("article") };
 }
 

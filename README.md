@@ -109,11 +109,17 @@ first run — they are the ones that differ most between releases:
 
 | Call | Used for | If it fails |
 | --- | --- | --- |
-| `POST /posts` with `whisper: true` | the note on 👍 | the like still lands; the note is lost silently |
-| `POST /solution/accept` and `/solution/unaccept` | solutions | the rating still lands; the solution is untouched |
-| `PUT /posts/:id/unhide` | the Un-hide button | you get a visible error; un-hide from the Review queue instead |
+| `POST /posts` with `whisper: true` | the note on 👍 | the like still lands, and the bar says the note could not be whispered |
+| `POST /solution/accept` and `/solution/unaccept` | solutions | the rating still lands, and the bar says the solution could not be changed |
+| `PUT /posts/:id/unhide` | the Un-hide button | you get the usual error; un-hide from the Review queue instead |
 
-The first two are deliberately "soft": a failure there never costs you the rating itself.
+The first two are deliberately "soft": a failure there never costs you the rating, and it is
+reported in the bar rather than swallowed. The note box on 👍 is not even offered unless the
+viewer is staff and whispers are available, so the common case never arises.
+
+Group membership is resolved defensively too: from the current user if the browser was told,
+otherwise from the user's own profile endpoint, cached for the tab. If that lookup fails the
+component **fails closed** — no bar — rather than showing the buttons to the wrong people.
 
 ## Tests
 

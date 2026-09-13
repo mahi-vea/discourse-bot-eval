@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it, before, beforeEach } from "node:test";
 import { JSDOM } from "jsdom";
 import { loadComponent } from "./load.mjs";
+import * as ajaxStub from "./stubs/ajax.mjs";
 import { applySettings, makePost, makeSite, makeUser } from "./fixtures.mjs";
 
 let initializer;
@@ -15,8 +16,12 @@ let cooked;
 
 beforeEach(() => {
   applySettings();
-  const dom = new JSDOM(`<article class="topic-post"><div class="cooked"><p>hi</p></div></article>`);
+  ajaxStub.reset();
+  const dom = new JSDOM(`<article class="topic-post"><div class="cooked"><p>hi</p></div></article>`, {
+    url: "https://forum.example.com",
+  });
   globalThis.document = dom.window.document;
+  globalThis.sessionStorage = dom.window.sessionStorage;
   cooked = dom.window.document.querySelector(".cooked");
 });
 
@@ -36,6 +41,7 @@ function boot(user) {
 }
 
 const decorate = (decorator, post) => decorator(cooked, { getModel: () => post });
+const settle = () => new Promise((r) => setTimeout(r, 0));
 const bars = () => cooked.querySelectorAll(".bot-eval-bar");
 
 describe("who gets the bar", () => {
@@ -59,8 +65,13 @@ describe("who gets the bar", () => {
     assert.equal(boot(makeUser(["students"])), null, "nothing is even registered");
   });
 
-  it("somebody in no groups does not", () => {
-    assert.equal(boot(makeUser([])), null);
+  it("somebody whose groups come back empty does not", async () => {
+    const decorator = boot(makeUser([]));
+
+    decorate(decorator, makePost());
+    await settle();
+
+    assert.equal(bars().length, 0);
   });
 
   it("an anonymous visitor does not", () => {

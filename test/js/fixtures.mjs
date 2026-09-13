@@ -28,8 +28,18 @@ export function makePost(overrides = {}) {
   };
 }
 
-export function makeUser(groups = ["eyantra_staff"]) {
-  return { username: "asha", groups: groups.map((name) => ({ name })) };
+export function makeUser(groups = ["eyantra_staff"], overrides = {}) {
+  return {
+    username: "asha",
+    moderator: true,
+    groups: groups.map((name) => ({ name })),
+    ...overrides,
+  };
+}
+
+// What the initializer builds and hands to renderBar.
+export function makeCtx(overrides = {}) {
+  return { site: makeSite(), solved: true, staff: true, whispers: undefined, ...overrides };
 }
 
 export const DEFAULT_SETTINGS = {

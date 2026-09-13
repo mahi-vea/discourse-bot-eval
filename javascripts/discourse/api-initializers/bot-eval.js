@@ -15,6 +15,7 @@ import * as I18nModule from "discourse-i18n";
 // be forged by editing this file in a browser.
 
 const BAR = "bot-eval-bar";
+const CACHE_KEY = "bot_eval_groups";
 
 function t(key, opts) {
   const full = themePrefix(`bot_eval.${key}`);
@@ -42,13 +43,49 @@ function isBotPost(post) {
   return names.length > 0 && names.includes(String(post?.username || "").toLowerCase());
 }
 
-function isEvaluator(user) {
+// --- who may evaluate ------------------------------------------------------
+//
+// Not every Discourse version sends the current user's groups to the browser,
+// so the list is taken from whichever of these answers first: the current user
+// serializer, this tab's cache, or the user's own profile endpoint.
+
+export function groupNamesFrom(user) {
+  const groups = user?.groups;
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return null;
+  }
+  return groups.map((group) => String(group?.name || "").toLowerCase()).filter(Boolean);
+}
+
+export function allowedFrom(names) {
   const allowed = listSetting(settings.evaluator_groups);
-  if (!user || allowed.length === 0) {
+  if (allowed.length === 0 || !Array.isArray(names)) {
     return false;
   }
-  const mine = (user.groups || []).map((group) => String(group.name || "").toLowerCase());
-  return allowed.some((name) => mine.includes(name));
+  return allowed.some((name) => names.includes(name));
+}
+
+function readCache(username) {
+  try {
+    const raw = sessionStorage.getItem(`${CACHE_KEY}:${username}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(username, names) {
+  try {
+    sessionStorage.setItem(`${CACHE_KEY}:${username}`, JSON.stringify(names));
+  } catch {
+    // a browser with storage disabled simply asks again next page load
+  }
+}
+
+function fetchGroupNames(username) {
+  return ajax(`/u/${encodeURIComponent(username)}.json`)
+    .then((result) => groupNamesFrom(result?.user) || [])
+    .catch(() => []);
 }
 
 // --- reading and writing Discourse's own state -----------------------------
@@ -63,10 +100,16 @@ function acted(post, id) {
 }
 
 // discourse-solved is a plugin in its own right. It cannot be installed from a
-// theme, so its presence is detected rather than assumed: the site setting it
-// exposes to the browser, or the field it adds to every post serializer.
+// theme, so its presence is detected rather than assumed.
 function solvedAvailable(ctx, post) {
   return !!(ctx.solved || post?.can_accept_answer !== undefined);
+}
+
+// A note on a thumbs up has nowhere to live except a whisper, and only staff
+// can whisper. `enable_whispers` is absent on versions that replaced it with a
+// group setting, so only an explicit false counts against it.
+function canWhisper(ctx) {
+  return !!settings.good_note_as_whisper && ctx.whispers !== false && !!ctx.staff;
 }
 
 function readState(post, ctx) {
@@ -77,7 +120,7 @@ function readState(post, ctx) {
     hidden: !!post.hidden,
     solution: !!post.accepted_answer,
     syncSolution: !!settings.mark_solution_on_good && solvedAvailable(ctx, post),
-    noteOnGood: !!settings.good_note_as_whisper,
+    noteOnGood: canWhisper(ctx),
   };
 }
 
@@ -98,11 +141,7 @@ function setActed(post, id, value) {
     summary.push(entry);
   }
 
-  try {
-    post.set("actions_summary", summary);
-  } catch {
-    post.actions_summary = summary;
-  }
+  setPostField(post, "actions_summary", summary);
 }
 
 function setPostField(post, key, value) {
@@ -162,9 +201,6 @@ const acceptSolution = (post) => ajax("/solution/accept", { type: "POST", data: 
 const unacceptSolution = (post) =>
   ajax("/solution/unaccept", { type: "POST", data: { id: post.id } });
 
-// Side errands (the whisper, the solution) must never sink the rating itself.
-const soft = (promise) => promise.catch(() => false);
-
 // --- rendering -------------------------------------------------------------
 
 function hintFor(state, mode) {
@@ -172,7 +208,7 @@ function hintFor(state, mode) {
   return state.syncSolution ? `${hint} ${t(`hint_solution.${mode}`)}` : hint;
 }
 
-export function template(state, mode) {
+export function template(state, mode, notice = null) {
   const buttons = `
     <div class="bot-eval-row">
       <span class="bot-eval-title">${esc(t("title"))}</span>
@@ -201,6 +237,9 @@ export function template(state, mode) {
     : "";
 
   let status = "";
+  if (notice) {
+    status += `<div class="bot-eval-status is-warning js-notice">${esc(notice)}</div>`;
+  }
   if (state.hidden) {
     status += `<div class="bot-eval-status is-review">${esc(t("status.hidden"))}</div>`;
   }
@@ -217,23 +256,33 @@ export function template(state, mode) {
   return buttons + form + status;
 }
 
-export function renderBar(bar, post, ctx, mode = null) {
+export function renderBar(bar, post, ctx, mode = null, notice = null) {
   const site = ctx.site;
   const state = readState(post, ctx);
-  bar.innerHTML = template(state, mode);
+  bar.innerHTML = template(state, mode, notice);
 
-  const textarea = bar.querySelector(".js-text");
-  textarea?.focus();
-
+  bar.querySelector(".js-text")?.focus();
   bar.closest(".topic-post")?.classList.toggle("bot-eval-under-review", state.hidden);
 
   const busy = (on) => bar.querySelectorAll("button").forEach((b) => (b.disabled = on));
-  const redraw = (next = null) => renderBar(bar, post, ctx, next);
+  const redraw = (next = null, message = null) => renderBar(bar, post, ctx, next, message);
 
+  // Each action resolves to a notice, or to nothing when all went well. A
+  // failure in the main call rejects and is shown the usual way.
   const run = (work) => {
     busy(true);
-    return work
-      .then(() => redraw())
+
+    let started;
+    try {
+      started = work(); // fired now, not a microtask later
+    } catch (error) {
+      busy(false);
+      popupAjaxError(error);
+      return;
+    }
+
+    return Promise.resolve(started)
+      .then((message) => redraw(null, message || null))
       .catch((error) => {
         busy(false);
         popupAjaxError(error);
@@ -242,15 +291,54 @@ export function renderBar(bar, post, ctx, mode = null) {
 
   // A note is never required. When none is written the flag still needs a
   // message, so a plain one is sent in its place.
-  const noteOr = (value, mode_) => (value ? value : t(`no_note.${mode_}`));
+  const noteOr = (value, forMode) => (value ? value : t(`no_note.${forMode}`));
+
+  const withSolution = (shouldAccept, carried) => {
+    if (!state.syncSolution) {
+      return carried;
+    }
+    if (shouldAccept && !state.solution) {
+      return acceptSolution(post).then(
+        () => {
+          setPostField(post, "accepted_answer", true);
+          return carried;
+        },
+        () => carried || t("notice.solution_failed")
+      );
+    }
+    if (!shouldAccept && state.solution) {
+      return unacceptSolution(post).then(
+        () => {
+          setPostField(post, "accepted_answer", false);
+          return carried;
+        },
+        () => carried || t("notice.solution_failed")
+      );
+    }
+    return carried;
+  };
+
+  const saveUp = (note) =>
+    run(() =>
+      like(post, site)
+        .then(() => setActed(post, typeId(site, "like"), true))
+        .then(() =>
+          note && state.noteOnGood
+            ? whisper(post, note).then(
+                () => null,
+                () => t("notice.whisper_failed")
+              )
+            : null
+        )
+        .then((carried) => withSolution(true, carried))
+    );
 
   bar.querySelector(".js-up")?.addEventListener("click", () => {
     if (state.liked) {
-      return run(
-        unlike(post, site).then(() => {
-          setActed(post, typeId(site, "like"), false);
-          return state.syncSolution && state.solution ? soft(unacceptSolution(post)) : null;
-        })
+      return run(() =>
+        unlike(post, site)
+          .then(() => setActed(post, typeId(site, "like"), false))
+          .then(() => withSolution(false, null))
       );
     }
     // The note box is only worth opening if the note has somewhere to go.
@@ -259,35 +347,24 @@ export function renderBar(bar, post, ctx, mode = null) {
 
   bar.querySelector(".js-down")?.addEventListener("click", () => {
     if (state.flagged) {
-      return run(unflag(post, site).then(() => setActed(post, typeId(site, "notify_moderators"), false)));
+      return run(() =>
+        unflag(post, site).then(() => setActed(post, typeId(site, "notify_moderators"), false))
+      );
     }
     return redraw("down");
   });
 
   bar.querySelector(".js-review")?.addEventListener("click", () => {
     if (state.hidden) {
-      return run(unhide(post).then(() => setPostField(post, "hidden", false)));
+      return run(() => unhide(post).then(() => setPostField(post, "hidden", false)));
     }
     return redraw("review");
   });
 
   bar.querySelector(".js-cancel")?.addEventListener("click", () => redraw());
 
-  function saveUp(note) {
-    return run(
-      like(post, site)
-        .then(() => setActed(post, typeId(site, "like"), true))
-        .then(() => (note ? soft(whisper(post, note)) : null))
-        .then(() =>
-          state.syncSolution && !state.solution
-            ? soft(acceptSolution(post)).then(() => setPostField(post, "accepted_answer", true))
-            : null
-        )
-    );
-  }
-
   bar.querySelector(".js-save")?.addEventListener("click", () => {
-    const note = (textarea?.value || "").trim();
+    const note = (bar.querySelector(".js-text")?.value || "").trim();
 
     if (mode === "up") {
       return saveUp(note);
@@ -295,7 +372,7 @@ export function renderBar(bar, post, ctx, mode = null) {
 
     const takeAction = mode === "review" && !!settings.hide_on_review;
 
-    return run(
+    return run(() =>
       flag(post, site, noteOr(note, mode), takeAction)
         .then(() => setActed(post, typeId(site, "notify_moderators"), true))
         .then(() => {
@@ -303,25 +380,59 @@ export function renderBar(bar, post, ctx, mode = null) {
             setPostField(post, "hidden", true);
           }
         })
-        .then(() =>
-          state.syncSolution && state.solution
-            ? soft(unacceptSolution(post)).then(() => setPostField(post, "accepted_answer", false))
-            : null
-        )
+        .then(() => withSolution(false, null))
     );
   });
 }
 
 export default apiInitializer("1.8.0", (api) => {
   const currentUser = api.getCurrentUser();
-  if (!isEvaluator(currentUser)) {
+  if (!currentUser || listSetting(settings.evaluator_groups).length === 0) {
     return;
   }
 
+  const siteSettings = api.container.lookup("service:site-settings");
   const ctx = {
     site: api.container.lookup("service:site"),
-    solved: !!api.container.lookup("service:site-settings")?.solved_enabled,
+    solved: !!siteSettings?.solved_enabled,
+    whispers: siteSettings?.enable_whispers,
+    staff: !!(currentUser.staff || currentUser.moderator || currentUser.admin),
+    allowed: null,
   };
+
+  const draw = (element, post) => {
+    element.querySelectorAll(`.${BAR}`).forEach((node) => node.remove());
+    const bar = document.createElement("div");
+    bar.className = BAR;
+    element.appendChild(bar);
+    renderBar(bar, post, ctx);
+  };
+
+  // Posts rendered before the group lookup came back, so they can be given a
+  // bar once the answer arrives instead of being missed.
+  const waiting = [];
+
+  const known = groupNamesFrom(currentUser) || readCache(currentUser.username);
+  if (known) {
+    ctx.allowed = allowedFrom(known);
+    if (!ctx.allowed) {
+      return;
+    }
+  } else {
+    fetchGroupNames(currentUser.username).then((names) => {
+      writeCache(currentUser.username, names);
+      ctx.allowed = allowedFrom(names);
+
+      const queued = waiting.splice(0, waiting.length);
+      if (ctx.allowed) {
+        queued.forEach(([element, post]) => {
+          if (element.isConnected !== false) {
+            draw(element, post);
+          }
+        });
+      }
+    });
+  }
 
   api.decorateCookedElement((element, helper) => {
     if (!helper?.getModel) {
@@ -333,11 +444,14 @@ export default apiInitializer("1.8.0", (api) => {
       return;
     }
 
-    element.querySelectorAll(`.${BAR}`).forEach((node) => node.remove());
+    if (ctx.allowed === null) {
+      waiting.push([element, post]);
+      return;
+    }
+    if (!ctx.allowed) {
+      return;
+    }
 
-    const bar = document.createElement("div");
-    bar.className = BAR;
-    element.appendChild(bar);
-    renderBar(bar, post, ctx);
+    draw(element, post);
   });
 });

@@ -37,3 +37,6 @@ en:
       hidden: "Hidden from everyone but the moderators."
       solution: "Accepted as the topic's solution."
     whisper_prefix: "Bot reply evaluation — good:"
+    notice:
+      whisper_failed: "Your rating was saved, but the note could not be posted as a whisper. Ask an admin to check that whispers are enabled for your group."
+      solution_failed: "Your rating was saved, but the topic's solution could not be changed."

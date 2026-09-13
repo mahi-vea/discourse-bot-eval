@@ -118,16 +118,14 @@ Work down this list — it is almost always one of the first three.
 | Browser cache | Hard refresh: Ctrl+Shift+R |
 | Anything in the console? | F12 → Console, reload the page, look for red |
 
-If everything above checks out and the bar is still missing, the likely cause is that your
-Discourse version does not send group membership to the browser. Open the console on a
-forum page and run:
+Group membership is handled for you: if your Discourse version does not send the viewer's
+groups to the browser, the component asks the user's own profile endpoint instead and
+remembers the answer for the rest of the tab. On a slow connection the bar can therefore
+appear a moment after the page does. If that lookup fails it shows **no** bar rather than
+guessing — so a missing bar is never a permissions leak.
 
-```js
-require("discourse/lib/current-user").default().groups
-```
-
-If that is empty or undefined for someone who *is* in the group, tell me and I will switch
-the check to a different signal.
+If everything above checks out and the bar is still missing, open the console (F12), reload,
+and look for a failed request to `/u/<your-username>.json`.
 
 ## What each button actually does
 

@@ -83,6 +83,13 @@
     margin-top: 0.5em;
     color: var(--primary-medium);
 
+    &.is-warning {
+      color: var(--danger);
+      background: var(--danger-low);
+      padding: 0.35em 0.5em;
+      border-radius: 3px;
+    }
+
     &.is-solution {
       color: var(--success);
       font-weight: 700;
