@@ -11,12 +11,18 @@ you are counting members' likes as staff evaluations.
 
 ## Where each rating lives
 
-| Rating | Stored as | Find it by |
+**Every rating writes exactly one staff-only whisper**, tagged by verdict. That is the record
+to query: one row per rating, whichever button was pressed, whether or not anything was
+typed. The other effects are extras.
+
+| Rating | The record | Extras |
 | --- | --- | --- |
-| 👍 Good | the topic's **accepted solution**, plus a like | `discourse_solved_solved_topics`, or `post_actions` type `like` |
-| 👎 Needs work | a **staff-only whisper** | `posts` where `post_type = 4` and the raw starts `[bot-eval:needs-work]` |
-| 🚫 Mark for review | a whisper, plus the reply **deleted** | `[bot-eval:review]`, and `posts.deleted_at is not null` |
-| any note | the whisper's text after the tag | same |
+| 👍 Good | a whisper tagged `[bot-eval:good]` | the topic's accepted solution, and a like |
+| 👎 Needs work | a whisper tagged `[bot-eval:needs-work]` | the solution is withdrawn |
+| 🚫 Mark for review | a whisper tagged `[bot-eval:review]` | the reply is deleted (`posts.deleted_at`) |
+
+A rating that was taken back is a **deleted whisper**, so every query filters on
+`w.deleted_at IS NULL`. One evaluator has at most one live whisper per reply.
 
 Nothing is ever flagged, so **the Review queue is not part of this** — ignore it.
 

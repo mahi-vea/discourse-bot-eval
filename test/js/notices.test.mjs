@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it, before, beforeEach } from "node:test";
 import { JSDOM } from "jsdom";
 import { loadComponent } from "./load.mjs";
-import { i18n } from "./stubs/i18n.mjs";
 import * as ajaxStub from "./stubs/ajax.mjs";
 import * as errorStub from "./stubs/ajax-error.mjs";
 import { applySettings, makePost, makeCtx, LIKE, TAG } from "./fixtures.mjs";
@@ -34,48 +33,30 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const notice = (bar) => $(bar, ".js-notice")?.textContent?.trim() || null;
 const call = (url) => ajaxStub.calls.find((c) => c.url === url);
 const failing = (prefix) => (url) =>
-  url.startsWith(prefix) ? Promise.reject(new Error("nope")) : Promise.resolve({});
+  url.startsWith(prefix) ? Promise.reject(new Error("nope")) : Promise.resolve({ id: 900 });
 
-describe("when notes cannot be written at all", () => {
-  it("offers the box to a moderator on a forum with whispers", () => {
+describe("writing the note", () => {
+  it("always offers the box, and lets the server decide whether a whisper is allowed", () => {
+    // `enable_whispers` is stale on versions governed by whispers_allowed_groups,
+    // so the component does not pre-judge it.
     const { bar } = mount();
     $(bar, ".js-up").click();
+
     assert.ok($(bar, ".bot-eval-form"));
   });
 
-  it("offers it when the version no longer exposes the whispers setting", () => {
-    const { bar } = mount({ whispers: undefined });
-    $(bar, ".js-up").click();
-    assert.ok($(bar, ".bot-eval-form"), "an absent setting is not a 'no'");
-  });
-
-  it("skips the box on a thumbs up when whispers are off", async () => {
-    const { bar, post } = mount({ whispers: false });
-
-    $(bar, ".js-up").click();
-    await settle();
-
-    assert.equal($(bar, ".bot-eval-form"), null);
-    assert.equal(post.accepted_answer, true, "the solution is still marked");
-  });
-
-  it("skips the box for somebody who is not staff", () => {
-    const { bar } = mount({ staff: false });
-
-    $(bar, ".js-up").click();
-
-    assert.equal($(bar, ".bot-eval-form"), null);
-  });
-
-  it("says so rather than silently losing a needs-work reason", async () => {
-    const { bar } = mount({ whispers: false });
+  it("sends the shape both old and new Discourse understand", async () => {
+    const { bar } = mount();
 
     $(bar, ".js-down").click();
+    $(bar, ".js-text").value = "wrong deadline";
     $(bar, ".js-save").click();
     await settle();
 
-    assert.equal(notice(bar), i18n("bot_eval.notice.note_required_off"));
-    assert.equal(call("/posts"), undefined);
+    const sent = call("/posts").data;
+    assert.equal(sent.whisper, true, "what the composer sends");
+    assert.equal(sent.post_type, 4, "what some versions read instead");
+    assert.equal(sent.raw, `${TAG.down} wrong deadline`);
   });
 });
 
@@ -92,6 +73,21 @@ describe("when a step fails", () => {
     assert.equal(post.accepted_answer, true);
     assert.match(notice(bar), /could not be saved/i);
     assert.deepEqual(errorStub.errors, [], "no error popup: the main action worked");
+  });
+
+  it("repeats the server's own words about a refused whisper", async () => {
+    ajaxStub.setHandler((url) =>
+      url === "/posts"
+        ? Promise.reject({ jqXHR: { responseJSON: { errors: ["Whispers are not enabled"] } } })
+        : Promise.resolve({ id: 900 })
+    );
+    const { bar } = mount();
+
+    $(bar, ".js-down").click();
+    $(bar, ".js-save").click();
+    await settle();
+
+    assert.match(notice(bar), /Whispers are not enabled/);
   });
 
   it("keeps the like and says the solution could not be changed", async () => {

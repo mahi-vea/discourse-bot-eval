@@ -66,8 +66,6 @@ export function makeCtx(overrides = {}) {
   return {
     site: makeSite(),
     solved: true,
-    staff: true,
-    whispers: undefined,
     userId: 1,
     ...overrides,
   };

@@ -127,9 +127,10 @@ function solvedAvailable(ctx, post) {
   return !!(ctx.solved || post?.can_accept_answer !== undefined);
 }
 
-// The notes are ordinary whispers in the same topic, so the evaluator's own one
-// can be found in the post stream and taken back.
-export function findNote(post, ctx, tag) {
+// Every rating writes exactly one tagged whisper, so each one can be read back,
+// replaced and taken away again. The evaluator's own note is found in the
+// topic's post stream.
+export function findNote(post, ctx, tag = null) {
   let stream = [];
   try {
     stream = post?.topic?.postStream?.posts || [];
@@ -137,26 +138,39 @@ export function findNote(post, ctx, tag) {
     stream = [];
   }
 
+  const tags = tag ? [tag] : Object.values(TAG);
+
   return stream.find(
     (entry) =>
       entry &&
       entry.post_type === WHISPER &&
+      !entry.deleted_at &&
       (ctx.userId == null || entry.user_id === ctx.userId) &&
       entry.reply_to_post_number === post.post_number &&
-      String(entry.raw || entry.cooked || "").includes(tag)
+      tags.some((value) => String(entry.raw || entry.cooked || "").includes(value))
   );
+}
+
+export function ratingOf(note) {
+  if (!note) {
+    return null;
+  }
+  const text = String(note.raw || note.cooked || "");
+  return Object.keys(TAG).find((kind) => text.includes(TAG[kind])) || null;
 }
 
 function readState(post, ctx) {
   const site = ctx.site;
+  const note = findNote(post, ctx);
+
   return {
+    note,
+    rating: ratingOf(note),
     liked: acted(post, typeId(site, "like")),
     solution: !!post.accepted_answer,
     solutionHere: post.can_accept_answer !== false,
     syncSolution: !!settings.mark_solution_on_good && solvedAvailable(ctx, post),
     hidden: !!post.deleted_at || !!post.hidden,
-    downNote: findNote(post, ctx, TAG.down),
-    canNote: ctx.whispers !== false && !!ctx.staff,
   };
 }
 
@@ -206,6 +220,8 @@ const acceptSolution = (post) => ajax("/solution/accept", { type: "POST", data: 
 const unacceptSolution = (post) =>
   ajax("/solution/unaccept", { type: "POST", data: { id: post.id } });
 
+// `whisper` is what the composer sends; `post_type` is what some versions read.
+// Sending both costs nothing and covers either.
 const whisper = (post, tag, note) =>
   ajax("/posts", {
     type: "POST",
@@ -214,6 +230,7 @@ const whisper = (post, tag, note) =>
       reply_to_post_number: post.post_number,
       raw: `${tag} ${note}`,
       whisper: true,
+      post_type: WHISPER,
     },
   });
 
@@ -234,12 +251,12 @@ export function template(state, mode, notice = null) {
     <div class="bot-eval-row">
       <span class="bot-eval-title">${esc(t("title"))}</span>
       <button type="button" class="btn btn-default bot-eval-btn js-up ${
-        state.solution || state.liked ? "is-active" : ""
+        state.rating === "up" ? "is-active" : ""
       }">
         ${icon("thumbs-up")}<span class="d-button-label">${esc(t("up"))}</span>
       </button>
       <button type="button" class="btn btn-default bot-eval-btn js-down ${
-        state.downNote ? "is-active" : ""
+        state.rating === "down" ? "is-active" : ""
       }">
         ${icon("thumbs-down")}<span class="d-button-label">${esc(t("down"))}</span>
       </button>
@@ -276,7 +293,7 @@ export function template(state, mode, notice = null) {
   if (state.liked && !state.solution) {
     status += `<div class="bot-eval-status">${esc(t("status.liked"))}</div>`;
   }
-  if (state.downNote) {
+  if (state.rating === "down") {
     status += `<div class="bot-eval-status">${esc(t("status.flagged"))}</div>`;
   }
 
@@ -318,14 +335,57 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
 
   const noteOr = (value, forMode) => (value ? value : t(`no_note.${forMode}`));
 
-  const saveNote = (tag, forMode, note, carried) => {
-    if (!state.canNote) {
-      return carried || t("notice.note_required_off");
+  // One rating per evaluator per reply: an earlier note of theirs is taken away
+  // before the new one is written, whichever button it came from.
+  const clearNote = () => {
+    if (!state.note) {
+      return Promise.resolve(true);
     }
-    return whisper(post, tag, noteOr(note, forMode)).then(
-      () => carried,
-      (error) => carried || withReason(t("notice.whisper_failed"), error)
+    return removePost(state.note.id).then(
+      () => {
+        // findNote skips deleted notes, so the bar updates without a reload.
+        setPostField(state.note, "deleted_at", new Date().toISOString());
+        return true;
+      },
+      () => false
     );
+  };
+
+  // The whisper the server just created is not in the post stream yet; adding
+  // it keeps the bar honest until the page is next loaded.
+  const rememberNote = (created, tag, text) => {
+    if (!created?.id) {
+      return;
+    }
+    try {
+      const stream = post?.topic?.postStream?.posts;
+      if (Array.isArray(stream)) {
+        stream.push({
+          id: created.id,
+          post_type: WHISPER,
+          user_id: ctx.userId,
+          reply_to_post_number: post.post_number,
+          raw: `${tag} ${text}`,
+          deleted_at: null,
+        });
+      }
+    } catch {
+      // a stream we cannot touch simply means the bar catches up on reload
+    }
+  };
+
+  const saveNote = (tag, forMode, note, carried) => {
+    const text = noteOr(note, forMode);
+
+    return clearNote()
+      .then(() => whisper(post, tag, text))
+      .then(
+        (created) => {
+          rememberNote(created, tag, text);
+          return carried;
+        },
+        (error) => carried || withReason(t("notice.whisper_failed"), error)
+      );
   };
 
   const withSolution = (shouldAccept, carried) => {
@@ -364,33 +424,43 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
       // withSolution resolves to a notice or to nothing, and may answer
       // without going to the server at all.
       Promise.resolve(withSolution(true, null))
-        .then((carried) => like(post, site).then(() => setActed(post, typeId(site, "like"), true), () => null).then(() => carried))
-        .then((carried) => (note && state.canNote ? saveNote(TAG.up, "up", note, carried) : carried))
+        .then((carried) =>
+          like(post, site)
+            .then(() => setActed(post, typeId(site, "like"), true), () => null)
+            .then(() => carried)
+        )
+        // A thumbs up records a note even when none was typed, so that a good
+        // reply is as easy to find afterwards as a bad one.
+        .then((carried) => saveNote(TAG.up, "up", note, carried))
     );
 
   bar.querySelector(".js-up")?.addEventListener("click", () => {
-    if (state.solution || state.liked) {
+    if (state.rating === "up") {
       return run(() =>
-        Promise.resolve(withSolution(false, null)).then((carried) =>
-          unlike(post, site).then(
-            () => {
-              setActed(post, typeId(site, "like"), false);
-              return carried;
-            },
-            () => carried
+        Promise.resolve(withSolution(false, null))
+          .then((carried) =>
+            unlike(post, site).then(
+              () => {
+                setActed(post, typeId(site, "like"), false);
+                return carried;
+              },
+              () => carried
+            )
           )
-        )
+          .then((carried) =>
+            clearNote().then((ok) => (ok ? carried : carried || t("notice.undo_failed")))
+          )
       );
     }
-    return state.canNote ? redraw("up") : saveUp("");
+    return redraw("up");
   });
 
   bar.querySelector(".js-down")?.addEventListener("click", () => {
-    if (state.downNote) {
+    if (state.rating === "down") {
       return run(() =>
-        removePost(state.downNote.id).then(
+        removePost(state.note.id).then(
           () => {
-            setPostField(state.downNote, "deleted_at", new Date().toISOString());
+            setPostField(state.note, "deleted_at", new Date().toISOString());
             return null;
           },
           (error) => withReason(t("notice.undo_failed"), error)
@@ -414,12 +484,16 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
   };
 
   bar.querySelector(".js-review")?.addEventListener("click", () => {
-    if (state.hidden) {
+    if (state.hidden || state.rating === "review") {
       return run(() =>
-        restorePost(post.id).then(() => {
-          setPostField(post, "deleted_at", null);
-          setPostField(post, "hidden", false);
-        })
+        restorePost(post.id)
+          .then(() => {
+            setPostField(post, "deleted_at", null);
+            setPostField(post, "hidden", false);
+          })
+          .then(() =>
+            clearNote().then((ok) => (ok ? null : t("notice.undo_failed")))
+          )
       );
     }
     return redraw("review");
@@ -454,8 +528,6 @@ export default apiInitializer("1.8.0", (api) => {
   const ctx = {
     site: api.container.lookup("service:site"),
     solved: !!siteSettings?.solved_enabled,
-    whispers: siteSettings?.enable_whispers,
-    staff: !!(currentUser.staff || currentUser.moderator || currentUser.admin),
     userId: currentUser.id,
     allowed: null,
   };

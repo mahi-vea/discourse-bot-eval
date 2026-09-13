@@ -38,8 +38,7 @@ en:
       hidden: "Removed from the topic. Only moderators can see it."
       solution: "Accepted as the topic's solution."
     notice:
-      whisper_failed: "The reply was rated, but the note could not be saved. Whispers may be switched off for your group — ask an admin."
-      note_required_off: "Notes cannot be saved because whispers are switched off on this forum. Ask an admin to enable them."
+      whisper_failed: "The reply was rated, but the note could not be saved as a whisper."
       solution_failed: "Your rating was saved, but the topic's solution could not be changed. The Solved plugin may not accept this call on this Discourse version."
       solution_not_here: "Your rating was saved. Solutions are not switched on for this category, so the reply was not marked as the solution."
       hide_failed: "Your note was recorded, but the reply could not be removed. You may not have moderator rights here."

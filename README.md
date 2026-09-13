@@ -9,9 +9,16 @@ bar under the post:
 
 | Action | Note | What it actually does in Discourse |
 | --- | --- | --- |
-| 👍 **Good** | optional | **Accepts the reply as the topic's solution**, and likes it. A note is kept as a staff-only whisper. |
+| 👍 **Good** | optional | **Accepts the reply as the topic's solution**, and likes it. |
 | 👎 **Needs work** | optional | Writes your reason as a **staff-only whisper** that members never see. Withdraws the solution. |
 | 🚫 **Mark for review** | optional | Writes the reason as a whisper and **deletes the reply** — gone for members, still visible to moderators. One click puts it back. |
+
+**Every rating also writes one tagged, staff-only whisper** under the reply —
+`[bot-eval:good]`, `[bot-eval:needs-work]` or `[bot-eval:review]` — carrying whatever was
+typed, or "no reason given". That is the record you query later, and it is written for all
+three buttons so a good reply is exactly as easy to find as a bad one. One rating per
+evaluator per reply: pressing a different button replaces the earlier note, and pressing the
+same one again deletes it.
 
 **Nothing here flags anything.** Flags are scored against the account they are raised on and
 can trip Discourse's auto-silence thresholds, which would eventually silence your bot; they
@@ -65,8 +72,9 @@ Three things the forum must already have:
 
 - **Moderator rights** for the group — required to whisper and to delete a reply. Without
   them the bar still marks solutions and likes, and says plainly why the rest did not work.
-- **Whispers enabled** (`enable_whispers` / `whispers_allowed_groups`), or written notes have
-  nowhere to live. The bar says so rather than losing what you typed.
+- **Whispers allowed for the group** (`whispers_allowed_groups`, or `enable_whispers` on
+  older versions). The component does not read those settings — it asks the server and
+  reports what the server says — so if you can whisper from the composer, notes will work.
 - **Solutions switched on in the category** (Discourse's per-category *"Allow topic owner and
   staff to mark a reply as the solution"*), or 👍 cannot mark anything. **This is the most
   common reason a thumbs up does not mark the solution.**

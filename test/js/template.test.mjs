@@ -3,7 +3,7 @@ import { describe, it, before, beforeEach } from "node:test";
 import { loadComponent } from "./load.mjs";
 import { i18n } from "./stubs/i18n.mjs";
 import { escapeExpression as esc } from "./stubs/utilities.mjs";
-import { applySettings, makeNote, TAG } from "./fixtures.mjs";
+import { applySettings } from "./fixtures.mjs";
 
 let template;
 
@@ -18,13 +18,13 @@ const t = (key, opts) => i18n(`bot_eval.${key}`, opts);
 const et = (key, opts) => esc(t(key, opts));
 
 const state = (overrides = {}) => ({
+  note: null,
+  rating: null,
   liked: false,
   solution: false,
   solutionHere: true,
   syncSolution: false,
   hidden: false,
-  downNote: null,
-  canNote: true,
   ...overrides,
 });
 
@@ -45,7 +45,7 @@ describe("the bar", () => {
           solution: true,
           syncSolution: true,
           hidden: true,
-          downNote: makeNote(TAG.down),
+          rating: "down",
         }),
         mode,
         "a notice"
@@ -54,15 +54,13 @@ describe("the bar", () => {
     }
   });
 
-  it("marks thumbs up active once the reply is the solution", () => {
-    assert.match(template(state({ solution: true }), null), /js-up is-active/);
-    assert.match(template(state({ liked: true }), null), /js-up is-active/);
-    assert.doesNotMatch(template(state(), null), /js-up is-active/);
-  });
+  it("marks a button active from the rating you recorded, not from stray likes", () => {
+    assert.match(template(state({ rating: "up" }), null), /js-up is-active/);
+    assert.match(template(state({ rating: "down" }), null), /js-down is-active/);
 
-  it("marks needs-work active once a note of yours exists", () => {
-    assert.match(template(state({ downNote: makeNote(TAG.down) }), null), /js-down is-active/);
-    assert.doesNotMatch(template(state(), null), /js-down is-active/);
+    // somebody else's like, or a solution accepted with Discourse's own button
+    assert.doesNotMatch(template(state({ liked: true, solution: true }), null), /js-up is-active/);
+    assert.doesNotMatch(template(state(), null), /is-active/);
   });
 
   it("flips the review button to put-back once the reply is gone", () => {
@@ -123,7 +121,7 @@ describe("solutions", () => {
 
 describe("status lines", () => {
   it("spells out what has already happened to the reply", () => {
-    const html = template(state({ hidden: true, downNote: makeNote(TAG.down) }), null);
+    const html = template(state({ hidden: true, rating: "down" }), null);
 
     assert.ok(html.includes(et("status.hidden")));
     assert.ok(html.includes(et("status.flagged")));

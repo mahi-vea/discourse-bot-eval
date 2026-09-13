@@ -96,25 +96,33 @@ describe("thumbs up", () => {
     assert.equal(note.data.raw, `${TAG.up} linked the right rulebook section`);
   });
 
-  it("writes no whisper when no note was typed", async () => {
+  it("records a note even when none was typed, so a good reply is findable", async () => {
     const { bar } = mount();
 
     $(bar, ".js-up").click();
     $(bar, ".js-save").click();
     await settle();
 
-    assert.equal(call("/posts"), undefined);
+    assert.equal(call("/posts").data.raw, `${TAG.up} ${i18n("bot_eval.no_note.up")}`);
   });
 
-  it("takes the solution and the like back when pressed again", async () => {
-    const { bar, post } = mount(makePost({ accepted_answer: true }));
+  it("takes the solution, the like and the note back when pressed again", async () => {
+    const note = makeNote(TAG.up, { id: 901 });
+    const { bar, post } = mount(makePost({ accepted_answer: true }, [note]));
 
     $(bar, ".js-up").click();
     await settle();
 
     assert.ok(call("/solution/unaccept"));
     assert.deepEqual(call("/post_actions/42").data, { post_action_type_id: LIKE });
+    assert.ok(call("/posts/901"), "the note goes too");
     assert.equal(post.accepted_answer, false);
+  });
+
+  it("is not confused by a like or a solution somebody else gave", () => {
+    const { bar } = mount(makePost({ accepted_answer: true, actions_summary: [{ id: LIKE, acted: true }] }));
+
+    assert.doesNotMatch(bar.innerHTML, /js-up is-active/, "only our own note counts as a rating");
   });
 });
 
@@ -215,6 +223,32 @@ describe("needs work", () => {
     assert.match(bar.innerHTML, /js-down is-active/);
   });
 
+  it("lights the button up straight away, before any reload", async () => {
+    const { bar } = mount();
+
+    $(bar, ".js-down").click();
+    type(bar, "wrong deadline");
+    $(bar, ".js-save").click();
+    await settle();
+
+    assert.match(bar.innerHTML, /js-down is-active/);
+  });
+
+  it("replaces an earlier rating instead of stacking a second one", async () => {
+    const note = makeNote(TAG.up, { id: 901 });
+    const { bar } = mount(makePost({}, [note]));
+
+    $(bar, ".js-down").click();
+    type(bar, "changed my mind");
+    $(bar, ".js-save").click();
+    await settle();
+
+    assert.ok(call("/posts/901"), "the thumbs up note is removed");
+    assert.equal(call("/posts").data.raw, `${TAG.down} changed my mind`);
+    assert.match(bar.innerHTML, /js-down is-active/);
+    assert.doesNotMatch(bar.innerHTML, /js-up is-active/);
+  });
+
   it("is undone by deleting that note", async () => {
     const note = makeNote(TAG.down, { id: 901 });
     const { bar } = mount(makePost({}, [note]));
@@ -224,6 +258,12 @@ describe("needs work", () => {
 
     assert.deepEqual(ajaxStub.calls[0], { url: "/posts/901", type: "DELETE", data: undefined });
     assert.equal($(bar, ".bot-eval-form"), null, "no note box for undoing");
+  });
+
+  it("ignores a note already taken back", () => {
+    const { bar } = mount(makePost({}, [makeNote(TAG.down, { deleted_at: "2026-09-13T09:00:00Z" })]));
+
+    assert.doesNotMatch(bar.innerHTML, /js-down is-active/);
   });
 
   it("ignores a note somebody else wrote", () => {
@@ -283,13 +323,15 @@ describe("mark for review", () => {
     assert.equal(post.deleted_at, null);
   });
 
-  it("puts the reply back in one click", async () => {
-    const { bar, post } = mount(makePost({ deleted_at: "2026-09-13T09:00:00Z" }));
+  it("puts the reply back and clears the rating in one click", async () => {
+    const note = makeNote(TAG.review, { id: 901 });
+    const { bar, post } = mount(makePost({ deleted_at: "2026-09-13T09:00:00Z" }, [note]));
 
     $(bar, ".js-review").click();
     await settle();
 
     assert.deepEqual(ajaxStub.calls[0], { url: "/posts/42/recover", type: "PUT", data: undefined });
+    assert.ok(call("/posts/901"), "the note goes too");
     assert.equal(post.deleted_at, null);
     assert.equal($(bar, ".bot-eval-form"), null, "no note box for putting it back");
   });
@@ -335,16 +377,20 @@ describe("when something goes wrong", () => {
     assert.match(notice(bar), /could not be saved/i);
   });
 
-  it("blocks a double submission while the request is in flight", () => {
+  it("blocks a double submission while the request is in flight", async () => {
     ajaxStub.setHandler(() => new Promise(() => {}));
     const { bar } = mount();
 
     $(bar, ".js-down").click();
     $(bar, ".js-save").click();
 
-    assert.ok($(bar, ".js-save").disabled);
+    assert.ok($(bar, ".js-save").disabled, "the buttons lock at once");
+
     $(bar, ".js-save").click();
-    assert.equal(ajaxStub.calls.length, 1);
+    $(bar, ".js-save").click();
+    await settle();
+
+    assert.equal(ajaxStub.calls.length, 1, "and only one note is ever written");
   });
 
   it("closes the note box on cancel without sending anything", () => {

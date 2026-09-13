@@ -19,7 +19,7 @@ one has a fallback, so nothing here is a blocker:
 | Check | Where | If it's missing |
 | --- | --- | --- |
 | Is the group **moderators**? | Admin → Groups → your group | Needed to write notes and to remove a reply. Without it 👍 still marks solutions; the bar explains what it could not do. |
-| Are **whispers** enabled? | Admin → Settings, search `whispers` | Needed for every written note. The bar says so rather than losing what you typed. |
+| Can you **whisper from the composer**? | try it on any topic | If you can, notes will work. The component asks the server rather than reading a setting, so `enable_whispers` being off does not matter when `whispers_allowed_groups` allows it. |
 | Is **discourse-solved** installed? | Admin → Plugins | 👍 then only likes. The component detects this and stops mentioning solutions. |
 | Are **solutions enabled in the category**? | the category → Settings → *Allow topic owner and staff to mark a reply as the solution* | **The most common reason 👍 does not mark the solution.** Tick it per category, or set `allow_solved_on_all_topics`. |
 

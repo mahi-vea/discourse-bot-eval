@@ -1,7 +1,7 @@
 // Stub for discourse/lib/ajax.
 export const calls = [];
 
-let handler = () => Promise.resolve({});
+let handler = (url) => Promise.resolve(url === "/posts" ? { id: 900 } : {});
 
 export function setHandler(fn) {
   handler = fn;
@@ -9,7 +9,7 @@ export function setHandler(fn) {
 
 export function reset() {
   calls.length = 0;
-  handler = () => Promise.resolve({});
+  handler = (url) => Promise.resolve(url === "/posts" ? { id: 900 } : {});
 }
 
 export function ajax(url, opts = {}) {
