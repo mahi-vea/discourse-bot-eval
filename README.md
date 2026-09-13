@@ -9,13 +9,18 @@ bar under the post:
 
 | Action | Note | What it actually does in Discourse |
 | --- | --- | --- |
-| 👍 **Good** | optional | **Likes** the post. A note is posted as a staff-only **whisper**. Accepts it as the topic's **solution**. |
-| 👎 **Needs work** | optional | **Flags** the post ("Something Else") with your note, which lands in the **Review queue**. Withdraws the solution. |
-| 🚫 **Mark for review** | optional | The same flag **with "take action"**, which **hides the reply immediately**. Withdraws the solution. |
+| 👍 **Good** | optional | **Accepts the reply as the topic's solution**, and likes it. A note is kept as a staff-only whisper. |
+| 👎 **Needs work** | optional | Writes your reason as a **staff-only whisper** that members never see. Withdraws the solution. |
+| 🚫 **Mark for review** | optional | Writes the reason as a whisper and **deletes the reply** — gone for members, still visible to moderators. One click puts it back. |
+
+**Nothing here flags anything.** Flags are scored against the account they are raised on and
+can trip Discourse's auto-silence thresholds, which would eventually silence your bot; they
+also cannot be retracted once a moderator has acted on them. Likes, whispers and deletions
+carry no penalty and every one of them undoes cleanly.
 
 Notes are never mandatory — the hint above the box asks for one and says where it will end
-up, but Save always works. A flag needs a message to be accepted by Discourse, so when you
-leave the box empty a plain stand-in message is sent in its place.
+up, but Save always works. When you leave the box empty the note simply records that no
+reason was given.
 
 ## Why it works this way
 
@@ -23,7 +28,8 @@ A theme component is browser-side only: it cannot add database tables, routes or
 So instead of inventing storage, every rating is recorded through **Discourse's own API, as
 the signed-in user**. Discourse authenticates and authorises each call itself, which means
 none of it can be forged by editing this component in a browser — the worst a determined
-person can do is like or flag a post, which they can already do from the normal UI.
+person can do is like a post, or — if they are a moderator — whisper and delete, which they
+can already do from the normal UI.
 
 It also means nothing ever leaves your forum, there is no endpoint to run, no CORS, and no
 API token living in a theme setting where every visitor could read it.
@@ -39,7 +45,7 @@ Step by step, including what to check when the bar does not appear, is in
 3. Fill in `bot_usernames` and `evaluator_groups` in its settings.
 
 To update: **Check for updates** on the component. To remove: delete it — already-recorded
-likes and flags are ordinary Discourse data and stay put.
+likes, whispers and deletions are ordinary Discourse data and stay put.
 
 ## Configure
 
@@ -49,20 +55,21 @@ Open the component and press **Settings**:
 | --- | --- |
 | `bot_usernames` | the bot's username, e.g. `eyantra_bot` (several allowed) |
 | `evaluator_groups` | `eyantra_staff` |
-| `hide_on_review` | ✅ hide immediately — needs the evaluator to be a moderator |
+| `hide_on_review` | ✅ delete the reply on Mark for review — needs moderator rights |
 | `mark_solution_on_good` | ✅ (ignored when the Solved plugin is absent) |
-| `good_note_as_whisper` | ✅ — switch off to drop the note box on 👍 |
 
 **Both lists start empty on purpose: until you name a bot *and* a group, nothing appears
 anywhere.**
 
-Two things the forum must already have:
+Three things the forum must already have:
 
-- **Moderator rights** for the group, or "Mark for review" cannot hide anything. With
-  `hide_on_review` off it still raises the reply in the Review queue for a moderator to
-  action.
-- **Whispers enabled** (`enable_whispers` / `whispers_allowed_groups`), or a note on 👍 has
-  nowhere to go. Without it, turn `good_note_as_whisper` off.
+- **Moderator rights** for the group — required to whisper and to delete a reply. Without
+  them the bar still marks solutions and likes, and says plainly why the rest did not work.
+- **Whispers enabled** (`enable_whispers` / `whispers_allowed_groups`), or written notes have
+  nowhere to live. The bar says so rather than losing what you typed.
+- **Solutions switched on in the category** (Discourse's per-category *"Allow topic owner and
+  staff to mark a reply as the solution"*), or 👍 cannot mark anything. **This is the most
+  common reason a thumbs up does not mark the solution.**
 
 ## Solutions
 
@@ -82,17 +89,11 @@ can see it; it just will not write a like for it.
 
 ## Reading the results
 
-- **The 👎 reasons are in the Review queue**: `https://your-forum/review?status=all` —
-  every flag with the note the evaluator wrote, who wrote it, and a link to the reply. This
-  is the one you want for fixing the bot.
-  Via the API: `GET /review.json?status=all&type=ReviewableFlaggedPost`, with an admin
-  `Api-Key` / `Api-Username` header.
-- **The 👍s are likes** on the bot's posts. A topic's JSON (`GET /t/<id>.json`) carries each
-  post's `actions_summary` with the like count. If the **Data Explorer** plugin is available,
-  one SQL query over `post_actions` where `post_action_type_id = 2` and the bot's `user_id`
-  gives you the lot in one go.
-- **The 👍 notes are whispers** in the topic, each starting with *"Bot reply evaluation —
-  good:"*, visible to staff only.
+- **Every written note is a staff-only whisper** in the topic it belongs to, tagged so it can
+  be found in one query: `[bot-eval:good]`, `[bot-eval:needs-work]` or `[bot-eval:review]`.
+- **The 👍s are likes** on the bot's posts, and the good replies are the topic's accepted
+  solutions.
+- **The pulled replies are deleted posts** — `posts.deleted_at is not null`.
 
 Full instructions — Data Explorer queries, the REST API, and a backup as the guaranteed
 fallback — are in **[EXPORT.md](EXPORT.md)**, including the one trap worth knowing up front:
@@ -109,13 +110,13 @@ first run — they are the ones that differ most between releases:
 
 | Call | Used for | If it fails |
 | --- | --- | --- |
-| `POST /posts` with `whisper: true` | the note on 👍 | the like still lands, and the bar says the note could not be whispered |
-| `POST /solution/accept` and `/solution/unaccept` | solutions | the rating still lands, and the bar says the solution could not be changed |
-| `PUT /posts/:id/unhide` | the Un-hide button | you get the usual error; un-hide from the Review queue instead |
+| `POST /solution/accept` and `/solution/unaccept` | 👍 marking the solution | the bar shows **the server's own error message**, and the like still lands |
+| `POST /posts` with `whisper: true` | every written note | the bar says the note could not be saved; the rating itself stands |
+| `DELETE /posts/:id` and `PUT /posts/:id/recover` | mark for review | the bar says the reply could not be removed, and does not pretend otherwise |
 
-The first two are deliberately "soft": a failure there never costs you the rating, and it is
-reported in the bar rather than swallowed. The note box on 👍 is not even offered unless the
-viewer is staff and whispers are available, so the common case never arises.
+Each step reports itself separately, so a failure never silently costs you the part that did
+work. When a solution cannot be accepted because the category has solutions switched off,
+the component says exactly that instead of trying and failing.
 
 Group membership is resolved defensively too: from the current user if the browser was told,
 otherwise from the user's own profile endpoint, cached for the tab. If that lookup fails the

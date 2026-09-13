@@ -7,15 +7,25 @@ import * as I18nModule from "discourse-i18n";
 // A theme component cannot add tables, routes or serializers, so every rating
 // is recorded through Discourse's own API, as the signed-in user:
 //
-//   Good          -> a like (+ optional staff-only whisper, + accept solution)
-//   Needs work    -> a "Something Else" flag carrying the note
-//   Mark review   -> the same flag with "take action", which hides the reply
+//   Good        -> accept the reply as the topic's solution, and like it
+//   Needs work  -> a staff-only whisper carrying the reason
+//   Mark review -> delete the reply (moderators still see it), plus a whisper
 //
-// Discourse authenticates and authorises all of that itself, so none of it can
-// be forged by editing this file in a browser.
+// Nothing here flags anything. Flags are scored against the account they are
+// raised on and can trip Discourse's auto-silence thresholds, which would
+// eventually silence the bot; they also cannot be retracted once acted on.
+// Whispers and deletions carry no penalty and undo cleanly.
 
 const BAR = "bot-eval-bar";
 const CACHE_KEY = "bot_eval_groups";
+const WHISPER = 4; // Post.types[:whisper]
+
+// Machine-readable markers, so the notes can be pulled out later with one query.
+const TAG = {
+  up: "[bot-eval:good]",
+  down: "[bot-eval:needs-work]",
+  review: "[bot-eval:review]",
+};
 
 function t(key, opts) {
   const full = themePrefix(`bot_eval.${key}`);
@@ -28,6 +38,18 @@ function t(key, opts) {
 const esc = (value) => escapeExpression(value == null ? "" : String(value));
 const icon = (name) =>
   `<svg class="fa d-icon d-icon-${name} svg-icon svg-string"><use href="#${name}"></use></svg>`;
+
+// The server's own words are far more useful than a guess at what went wrong.
+function reason(error) {
+  const body = error?.jqXHR?.responseJSON || error?.responseJSON;
+  const message = body?.errors?.[0] || body?.error || error?.message;
+  return message ? String(message) : null;
+}
+
+const withReason = (base, error) => {
+  const detail = reason(error);
+  return detail ? `${base} (${detail})` : base;
+};
 
 // --- configuration ---------------------------------------------------------
 
@@ -88,7 +110,7 @@ function fetchGroupNames(username) {
     .catch(() => []);
 }
 
-// --- reading and writing Discourse's own state -----------------------------
+// --- reading Discourse's own state -----------------------------------------
 
 function typeId(site, nameKey) {
   const types = site?.post_action_types || site?.postActionTypes || [];
@@ -105,23 +127,45 @@ function solvedAvailable(ctx, post) {
   return !!(ctx.solved || post?.can_accept_answer !== undefined);
 }
 
-// A note on a thumbs up has nowhere to live except a whisper, and only staff
-// can whisper. `enable_whispers` is absent on versions that replaced it with a
-// group setting, so only an explicit false counts against it.
-function canWhisper(ctx) {
-  return !!settings.good_note_as_whisper && ctx.whispers !== false && !!ctx.staff;
+// The notes are ordinary whispers in the same topic, so the evaluator's own one
+// can be found in the post stream and taken back.
+export function findNote(post, ctx, tag) {
+  let stream = [];
+  try {
+    stream = post?.topic?.postStream?.posts || [];
+  } catch {
+    stream = [];
+  }
+
+  return stream.find(
+    (entry) =>
+      entry &&
+      entry.post_type === WHISPER &&
+      (ctx.userId == null || entry.user_id === ctx.userId) &&
+      entry.reply_to_post_number === post.post_number &&
+      String(entry.raw || entry.cooked || "").includes(tag)
+  );
 }
 
 function readState(post, ctx) {
   const site = ctx.site;
   return {
     liked: acted(post, typeId(site, "like")),
-    flagged: acted(post, typeId(site, "notify_moderators")),
-    hidden: !!post.hidden,
     solution: !!post.accepted_answer,
+    solutionHere: post.can_accept_answer !== false,
     syncSolution: !!settings.mark_solution_on_good && solvedAvailable(ctx, post),
-    noteOnGood: canWhisper(ctx),
+    hidden: !!post.deleted_at || !!post.hidden,
+    downNote: findNote(post, ctx, TAG.down),
+    canNote: ctx.whispers !== false && !!ctx.staff,
   };
+}
+
+function setPostField(post, key, value) {
+  try {
+    post.set(key, value);
+  } catch {
+    post[key] = value;
+  }
 }
 
 function setActed(post, id, value) {
@@ -144,14 +188,6 @@ function setActed(post, id, value) {
   setPostField(post, "actions_summary", summary);
 }
 
-function setPostField(post, key, value) {
-  try {
-    post.set(key, value);
-  } catch {
-    post[key] = value;
-  }
-}
-
 // --- the calls themselves --------------------------------------------------
 
 const like = (post, site) =>
@@ -166,40 +202,25 @@ const unlike = (post, site) =>
     data: { post_action_type_id: typeId(site, "like") },
   });
 
-const flag = (post, site, message, takeAction) =>
-  ajax("/post_actions", {
-    type: "POST",
-    data: {
-      id: post.id,
-      post_action_type_id: typeId(site, "notify_moderators"),
-      message,
-      take_action: !!takeAction,
-      flag_topic: false,
-    },
-  });
+const acceptSolution = (post) => ajax("/solution/accept", { type: "POST", data: { id: post.id } });
+const unacceptSolution = (post) =>
+  ajax("/solution/unaccept", { type: "POST", data: { id: post.id } });
 
-const unflag = (post, site) =>
-  ajax(`/post_actions/${post.id}`, {
-    type: "DELETE",
-    data: { post_action_type_id: typeId(site, "notify_moderators") },
-  });
-
-const unhide = (post) => ajax(`/posts/${post.id}/unhide`, { type: "PUT" });
-
-const whisper = (post, note) =>
+const whisper = (post, tag, note) =>
   ajax("/posts", {
     type: "POST",
     data: {
       topic_id: post.topic_id,
       reply_to_post_number: post.post_number,
-      raw: `${t("whisper_prefix")} ${note}`,
+      raw: `${tag} ${note}`,
       whisper: true,
     },
   });
 
-const acceptSolution = (post) => ajax("/solution/accept", { type: "POST", data: { id: post.id } });
-const unacceptSolution = (post) =>
-  ajax("/solution/unaccept", { type: "POST", data: { id: post.id } });
+// Taking a reply out of public view: moderators still see it, one call puts it
+// back, and the bot account collects nothing against it.
+const removePost = (id) => ajax(`/posts/${id}`, { type: "DELETE" });
+const restorePost = (id) => ajax(`/posts/${id}/recover`, { type: "PUT" });
 
 // --- rendering -------------------------------------------------------------
 
@@ -212,13 +233,19 @@ export function template(state, mode, notice = null) {
   const buttons = `
     <div class="bot-eval-row">
       <span class="bot-eval-title">${esc(t("title"))}</span>
-      <button type="button" class="btn btn-default bot-eval-btn js-up ${state.liked ? "is-active" : ""}">
+      <button type="button" class="btn btn-default bot-eval-btn js-up ${
+        state.solution || state.liked ? "is-active" : ""
+      }">
         ${icon("thumbs-up")}<span class="d-button-label">${esc(t("up"))}</span>
       </button>
-      <button type="button" class="btn btn-default bot-eval-btn js-down ${state.flagged ? "is-active" : ""}">
+      <button type="button" class="btn btn-default bot-eval-btn js-down ${
+        state.downNote ? "is-active" : ""
+      }">
         ${icon("thumbs-down")}<span class="d-button-label">${esc(t("down"))}</span>
       </button>
-      <button type="button" class="btn btn-default bot-eval-btn js-review ${state.hidden ? "is-active" : ""}">
+      <button type="button" class="btn btn-default bot-eval-btn js-review ${
+        state.hidden ? "is-active" : ""
+      }">
         ${icon(state.hidden ? "eye" : "eye-slash")}<span class="d-button-label">${esc(
           state.hidden ? t("unmark_review") : t("mark_review")
         )}</span>
@@ -246,10 +273,10 @@ export function template(state, mode, notice = null) {
   if (state.solution) {
     status += `<div class="bot-eval-status is-solution">${esc(t("status.solution"))}</div>`;
   }
-  if (state.liked) {
+  if (state.liked && !state.solution) {
     status += `<div class="bot-eval-status">${esc(t("status.liked"))}</div>`;
   }
-  if (state.flagged) {
+  if (state.downNote) {
     status += `<div class="bot-eval-status">${esc(t("status.flagged"))}</div>`;
   }
 
@@ -267,14 +294,14 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
   const busy = (on) => bar.querySelectorAll("button").forEach((b) => (b.disabled = on));
   const redraw = (next = null, message = null) => renderBar(bar, post, ctx, next, message);
 
-  // Each action resolves to a notice, or to nothing when all went well. A
-  // failure in the main call rejects and is shown the usual way.
+  // Each action resolves to a notice, or to nothing when all went well. Only a
+  // failure of the *main* point of the action rejects and pops up.
   const run = (work) => {
     busy(true);
 
     let started;
     try {
-      started = work(); // fired now, not a microtask later
+      started = work();
     } catch (error) {
       busy(false);
       popupAjaxError(error);
@@ -289,13 +316,25 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
       });
   };
 
-  // A note is never required. When none is written the flag still needs a
-  // message, so a plain one is sent in its place.
   const noteOr = (value, forMode) => (value ? value : t(`no_note.${forMode}`));
+
+  const saveNote = (tag, forMode, note, carried) => {
+    if (!state.canNote) {
+      return carried || t("notice.note_required_off");
+    }
+    return whisper(post, tag, noteOr(note, forMode)).then(
+      () => carried,
+      (error) => carried || withReason(t("notice.whisper_failed"), error)
+    );
+  };
 
   const withSolution = (shouldAccept, carried) => {
     if (!state.syncSolution) {
       return carried;
+    }
+    // discourse-solved only applies in categories where it is switched on.
+    if (shouldAccept && !state.solutionHere) {
+      return carried || t("notice.solution_not_here");
     }
     if (shouldAccept && !state.solution) {
       return acceptSolution(post).then(
@@ -303,7 +342,7 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
           setPostField(post, "accepted_answer", true);
           return carried;
         },
-        () => carried || t("notice.solution_failed")
+        (error) => carried || withReason(t("notice.solution_failed"), error)
       );
     }
     if (!shouldAccept && state.solution) {
@@ -312,51 +351,76 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
           setPostField(post, "accepted_answer", false);
           return carried;
         },
-        () => carried || t("notice.solution_failed")
+        (error) => carried || withReason(t("notice.solution_failed"), error)
       );
     }
     return carried;
   };
 
+  // Marking the reply as the solution is the point of a thumbs up; the like is
+  // a visible side effect and must not be able to fail the action.
   const saveUp = (note) =>
     run(() =>
-      like(post, site)
-        .then(() => setActed(post, typeId(site, "like"), true))
-        .then(() =>
-          note && state.noteOnGood
-            ? whisper(post, note).then(
-                () => null,
-                () => t("notice.whisper_failed")
-              )
-            : null
-        )
-        .then((carried) => withSolution(true, carried))
+      // withSolution resolves to a notice or to nothing, and may answer
+      // without going to the server at all.
+      Promise.resolve(withSolution(true, null))
+        .then((carried) => like(post, site).then(() => setActed(post, typeId(site, "like"), true), () => null).then(() => carried))
+        .then((carried) => (note && state.canNote ? saveNote(TAG.up, "up", note, carried) : carried))
     );
 
   bar.querySelector(".js-up")?.addEventListener("click", () => {
-    if (state.liked) {
+    if (state.solution || state.liked) {
       return run(() =>
-        unlike(post, site)
-          .then(() => setActed(post, typeId(site, "like"), false))
-          .then(() => withSolution(false, null))
+        Promise.resolve(withSolution(false, null)).then((carried) =>
+          unlike(post, site).then(
+            () => {
+              setActed(post, typeId(site, "like"), false);
+              return carried;
+            },
+            () => carried
+          )
+        )
       );
     }
-    // The note box is only worth opening if the note has somewhere to go.
-    return state.noteOnGood ? redraw("up") : saveUp("");
+    return state.canNote ? redraw("up") : saveUp("");
   });
 
   bar.querySelector(".js-down")?.addEventListener("click", () => {
-    if (state.flagged) {
+    if (state.downNote) {
       return run(() =>
-        unflag(post, site).then(() => setActed(post, typeId(site, "notify_moderators"), false))
+        removePost(state.downNote.id).then(
+          () => {
+            setPostField(state.downNote, "deleted_at", new Date().toISOString());
+            return null;
+          },
+          (error) => withReason(t("notice.undo_failed"), error)
+        )
       );
     }
     return redraw("down");
   });
 
+  const takeOutOfView = (carried) => {
+    if (!settings.hide_on_review) {
+      return carried;
+    }
+    return removePost(post.id).then(
+      () => {
+        setPostField(post, "deleted_at", new Date().toISOString());
+        return carried;
+      },
+      (error) => carried || withReason(t("notice.hide_failed"), error)
+    );
+  };
+
   bar.querySelector(".js-review")?.addEventListener("click", () => {
     if (state.hidden) {
-      return run(() => unhide(post).then(() => setPostField(post, "hidden", false)));
+      return run(() =>
+        restorePost(post.id).then(() => {
+          setPostField(post, "deleted_at", null);
+          setPostField(post, "hidden", false);
+        })
+      );
     }
     return redraw("review");
   });
@@ -370,17 +434,12 @@ export function renderBar(bar, post, ctx, mode = null, notice = null) {
       return saveUp(note);
     }
 
-    const takeAction = mode === "review" && !!settings.hide_on_review;
+    const tag = mode === "review" ? TAG.review : TAG.down;
 
     return run(() =>
-      flag(post, site, noteOr(note, mode), takeAction)
-        .then(() => setActed(post, typeId(site, "notify_moderators"), true))
-        .then(() => {
-          if (takeAction) {
-            setPostField(post, "hidden", true);
-          }
-        })
-        .then(() => withSolution(false, null))
+      Promise.resolve(saveNote(tag, mode, note, null))
+        .then((carried) => (mode === "review" ? takeOutOfView(carried) : carried))
+        .then((carried) => withSolution(false, carried))
     );
   });
 }
@@ -397,6 +456,7 @@ export default apiInitializer("1.8.0", (api) => {
     solved: !!siteSettings?.solved_enabled,
     whispers: siteSettings?.enable_whispers,
     staff: !!(currentUser.staff || currentUser.moderator || currentUser.admin),
+    userId: currentUser.id,
     allowed: null,
   };
 

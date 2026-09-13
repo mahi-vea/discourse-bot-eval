@@ -15,7 +15,3 @@ hide_on_review:
 mark_solution_on_good:
   type: bool
   default: true
-
-good_note_as_whisper:
-  type: bool
-  default: true

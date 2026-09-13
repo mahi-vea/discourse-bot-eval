@@ -18,9 +18,10 @@ one has a fallback, so nothing here is a blocker:
 
 | Check | Where | If it's missing |
 | --- | --- | --- |
-| Is the group **moderators**? | Admin → Groups → your group | Turn `hide_on_review` off in step 4. "Mark for review" then sends the reply to the Review queue instead of hiding it. |
-| Are **whispers** enabled? | Admin → Settings, search `whispers` | Turn `good_note_as_whisper` off in step 4. The note box disappears from 👍. |
-| Is **discourse-solved** installed? | Admin → Plugins | Nothing to do. The component detects it and skips the solution behaviour silently. |
+| Is the group **moderators**? | Admin → Groups → your group | Needed to write notes and to remove a reply. Without it 👍 still marks solutions; the bar explains what it could not do. |
+| Are **whispers** enabled? | Admin → Settings, search `whispers` | Needed for every written note. The bar says so rather than losing what you typed. |
+| Is **discourse-solved** installed? | Admin → Plugins | 👍 then only likes. The component detects this and stops mentioning solutions. |
+| Are **solutions enabled in the category**? | the category → Settings → *Allow topic owner and staff to mark a reply as the solution* | **The most common reason 👍 does not mark the solution.** Tick it per category, or set `allow_solved_on_all_topics`. |
 
 ---
 
@@ -83,7 +84,6 @@ Click the component in the list, then **Settings**:
 | `evaluator_groups` | `eyantra_staff`. Several allowed, one per line |
 | `hide_on_review` | ✅ — **off** if your group are not moderators |
 | `mark_solution_on_good` | ✅ — ignored if discourse-solved is not installed |
-| `good_note_as_whisper` | ✅ — **off** if whispers are disabled |
 
 The first two are the ones that matter: **while either is empty, the component does nothing
 at all, for everybody.** That is deliberate — there is no way to half-configure it into
@@ -96,14 +96,18 @@ Settings save immediately. No rebuild.
 1. Log in as someone in `eyantra_staff` and open a topic where the bot has replied.
 2. Under the bot's reply: **Bot reply:** 👍 Good · 👎 Needs work · 🚫 Mark for review.
    Under a *person's* reply: nothing. That is the point.
-3. Press 👍 and save with the box empty. The post should gain a like.
-4. Press 👎, type a reason, save. Open `https://your-forum/review` — your reason is there.
-5. Press 🚫, type a reason, save. The reply should be marked hidden.
-6. Open the same topic in a **private window, logged out**. The hidden reply should be gone.
-7. Press **Un-hide** to put it back.
+3. Press 👍 and save with the box empty. The reply should be **marked as the solution** and
+   gain a like. If it only gains a like, read the pink notice in the bar — it names the
+   reason, usually solutions not being enabled for that category.
+4. Press 👍 again. The solution and the like should both come off.
+5. Press 👎, type a reason, save. A staff-only whisper appears in the topic, and 👎 lights up.
+6. Press 👎 again — the whisper is deleted and the button goes dark. (This is the undo.)
+7. Press 🚫, type a reason, save. The reply disappears from the topic for members.
+8. Open the same topic in a **private window, logged out**. The reply should be gone.
+9. Press **Put back** to restore it.
 
-Do this on one throwaway topic first. Everything in step 5 is reversible, but a flag does
-appear in the Review queue for your moderators to see.
+Do this on one throwaway topic first. Every step is reversible, and none of it puts anything
+in front of your other moderators.
 
 ## If the bar does not appear
 
@@ -133,19 +137,26 @@ Nothing is stored by this component — it drives Discourse's own features:
 
 | Button | Discourse action | Where it shows up |
 | --- | --- | --- |
-| 👍 Good | a **like** (+ a staff-only **whisper** for the note, + accepts the **solution**) | on the post; the whisper in the topic, staff-only |
-| 👎 Needs work | a **flag** carrying your note | Admin → Review queue |
-| 🚫 Mark for review | the same flag **with "take action"** | the reply is hidden; the flag is in the Review queue |
+| 👍 Good | **accepts the solution**, and likes the post | the solution badge on the topic |
+| 👎 Needs work | a **staff-only whisper** tagged `[bot-eval:needs-work]` | in the topic, staff only |
+| 🚫 Mark for review | a whisper tagged `[bot-eval:review]`, then **deletes the reply** | the reply shows as deleted to moderators, and is gone for members |
+
+**No flags are ever raised.** A flag is scored against the account it is raised on, and
+enough of them can silence a low-trust bot account; flags also cannot be retracted once
+acted on. Everything above undoes with one click and leaves the bot's standing untouched.
 
 So everything is visible and reversible through the normal moderation tools, with or without
 this component installed.
 
 ## Reading the results later
 
-- **The 👎 reasons**: `https://your-forum/review?status=all` — the note, who wrote it, and a
-  link to the reply.
-- **The 👍s**: likes on the bot's posts.
-- **The 👍 notes**: whispers in the topic, each beginning *"Bot reply evaluation — good:"*.
+- **Every written note** is a staff-only whisper tagged `[bot-eval:good]`,
+  `[bot-eval:needs-work]` or `[bot-eval:review]`. Searching the forum for `bot-eval` as a
+  moderator finds them all.
+- **The good replies** are the ones marked as their topic's solution.
+- **The pulled replies** are deleted posts.
+
+[EXPORT.md](EXPORT.md) has the queries.
 
 ## Updating
 
@@ -156,7 +167,7 @@ this component installed.
 
 Admin → Customize → Themes → the component → **Delete**. The buttons disappear at once.
 
-Everything already recorded stays exactly where it is — likes, flags and whispers are
-ordinary Discourse data and do not belong to this component. **Replies you hid stay hidden**,
-so un-hide anything still on hold before you delete it, or clear them afterwards from the
-Review queue.
+Everything already recorded stays exactly where it is — likes, whispers, solutions and
+deletions are ordinary Discourse data and do not belong to this component. **Replies you
+pulled stay deleted**, so put back anything still on hold before you remove the component,
+or restore them afterwards from the topic as a moderator.

@@ -5,7 +5,7 @@ import { loadComponent } from "./load.mjs";
 import { i18n } from "./stubs/i18n.mjs";
 import * as ajaxStub from "./stubs/ajax.mjs";
 import * as errorStub from "./stubs/ajax-error.mjs";
-import { applySettings, makePost, makeCtx, LIKE } from "./fixtures.mjs";
+import { applySettings, makePost, makeCtx, LIKE, TAG } from "./fixtures.mjs";
 
 let renderBar;
 
@@ -32,52 +32,55 @@ function mount(ctxOverrides = {}, post = makePost()) {
 const $ = (bar, sel) => bar.querySelector(sel);
 const settle = () => new Promise((r) => setTimeout(r, 0));
 const notice = (bar) => $(bar, ".js-notice")?.textContent?.trim() || null;
+const call = (url) => ajaxStub.calls.find((c) => c.url === url);
 const failing = (prefix) => (url) =>
   url.startsWith(prefix) ? Promise.reject(new Error("nope")) : Promise.resolve({});
 
-describe("the note box on a thumbs up is only offered when it has somewhere to go", () => {
-  it("is offered to a moderator on a forum with whispers", () => {
+describe("when notes cannot be written at all", () => {
+  it("offers the box to a moderator on a forum with whispers", () => {
     const { bar } = mount();
     $(bar, ".js-up").click();
     assert.ok($(bar, ".bot-eval-form"));
   });
 
-  it("is offered when the version no longer exposes the whispers setting", () => {
+  it("offers it when the version no longer exposes the whispers setting", () => {
     const { bar } = mount({ whispers: undefined });
     $(bar, ".js-up").click();
     assert.ok($(bar, ".bot-eval-form"), "an absent setting is not a 'no'");
   });
 
-  it("is skipped when whispers are switched off", () => {
-    const { bar } = mount({ whispers: false });
+  it("skips the box on a thumbs up when whispers are off", async () => {
+    const { bar, post } = mount({ whispers: false });
 
     $(bar, ".js-up").click();
+    await settle();
 
     assert.equal($(bar, ".bot-eval-form"), null);
-    assert.equal(ajaxStub.calls[0].url, "/post_actions", "it just likes the post");
+    assert.equal(post.accepted_answer, true, "the solution is still marked");
   });
 
-  it("is skipped for somebody who is not staff", () => {
+  it("skips the box for somebody who is not staff", () => {
     const { bar } = mount({ staff: false });
 
     $(bar, ".js-up").click();
 
     assert.equal($(bar, ".bot-eval-form"), null);
-    assert.equal(ajaxStub.calls[0].url, "/post_actions");
   });
 
-  it("is skipped when the admin turned the note off", () => {
-    applySettings({ good_note_as_whisper: false });
-    const { bar } = mount();
+  it("says so rather than silently losing a needs-work reason", async () => {
+    const { bar } = mount({ whispers: false });
 
-    $(bar, ".js-up").click();
+    $(bar, ".js-down").click();
+    $(bar, ".js-save").click();
+    await settle();
 
-    assert.equal($(bar, ".bot-eval-form"), null);
+    assert.equal(notice(bar), i18n("bot_eval.notice.note_required_off"));
+    assert.equal(call("/posts"), undefined);
   });
 });
 
-describe("when a side errand fails", () => {
-  it("keeps the like and says the note could not be whispered", async () => {
+describe("when a step fails", () => {
+  it("keeps the solution and says the note could not be saved", async () => {
     ajaxStub.setHandler(failing("/posts"));
     const { bar, post } = mount();
 
@@ -86,9 +89,9 @@ describe("when a side errand fails", () => {
     $(bar, ".js-save").click();
     await settle();
 
-    assert.equal(post.actions_summary.find((a) => a.id === LIKE).acted, true);
-    assert.equal(notice(bar), i18n("bot_eval.notice.whisper_failed"));
-    assert.deepEqual(errorStub.errors, [], "no error popup for a side errand");
+    assert.equal(post.accepted_answer, true);
+    assert.match(notice(bar), /could not be saved/i);
+    assert.deepEqual(errorStub.errors, [], "no error popup: the main action worked");
   });
 
   it("keeps the like and says the solution could not be changed", async () => {
@@ -100,20 +103,7 @@ describe("when a side errand fails", () => {
     await settle();
 
     assert.equal(post.actions_summary.find((a) => a.id === LIKE).acted, true);
-    assert.equal(notice(bar), i18n("bot_eval.notice.solution_failed"));
-  });
-
-  it("keeps the flag when the solution cannot be withdrawn", async () => {
-    ajaxStub.setHandler(failing("/solution"));
-    const { bar, post } = mount({}, makePost({ accepted_answer: true }));
-
-    $(bar, ".js-down").click();
-    $(bar, ".js-text").value = "wrong deadline";
-    $(bar, ".js-save").click();
-    await settle();
-
-    assert.equal(notice(bar), i18n("bot_eval.notice.solution_failed"));
-    assert.equal(post.accepted_answer, true, "and says so rather than pretending");
+    assert.match(notice(bar), /solution could not be changed/i);
   });
 
   it("says nothing at all when everything worked", async () => {
@@ -127,15 +117,18 @@ describe("when a side errand fails", () => {
     assert.equal(notice(bar), null);
   });
 
-  it("still reports a failure of the rating itself the usual way", async () => {
-    ajaxStub.setHandler(failing("/post_actions"));
-    const { bar } = mount();
+  it("explains a failed undo instead of leaving a dead button", async () => {
+    ajaxStub.setHandler(() => Promise.reject(new Error("gone")));
+    const { bar } = mount(
+      {},
+      makePost({}, [
+        { id: 901, post_type: 4, user_id: 1, reply_to_post_number: 3, raw: `${TAG.down} x` },
+      ])
+    );
 
-    $(bar, ".js-up").click();
-    $(bar, ".js-save").click();
+    $(bar, ".js-down").click();
     await settle();
 
-    assert.equal(errorStub.errors.length, 1, "this one is not soft");
-    assert.equal($(bar, ".js-save").disabled, false);
+    assert.match(notice(bar), /could not be undone/i);
   });
 });
